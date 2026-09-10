@@ -1,0 +1,5 @@
+# SecureChain DMS — Security Layer
+# Cryptographic security modules for the Zero-Trust Digital Evidence Vault (SIH26190)
+
+cryptography>=43.0.0
+pydantic>=2.0.0
