@@ -1,0 +1,26 @@
+{
+  "name": "securechain-dms-quorum-engine",
+  "version": "1.0.0",
+  "description": "M-of-N Quorum Approval Engine module for SecureChain DMS (SIH26190)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "jest --verbose --detectOpenHandles"
+  },
+  "keywords": [
+    "quorum",
+    "approval-engine",
+    "security",
+    "worm-audit",
+    "securechain-dms"
+  ],
+  "author": "Google DeepMind Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}
