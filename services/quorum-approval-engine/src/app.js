@@ -1,4 +1,7 @@
 const express = require('express');
+require('dotenv').config();
+// Use PostgresDb in production; tests can still pass a customDb (MemoryDb)
+const PostgresDb = require('./db/postgresDb');
 const MemoryDb = require('./db/memoryDb');
 const ApprovalService = require('./services/approvalService');
 const AuditService = require('./services/auditService');
@@ -9,7 +12,8 @@ function createApp(customDb = null) {
   const app = express();
   app.use(express.json());
 
-  const db = customDb || new MemoryDb();
+  // Use real PostgreSQL unless a custom DB is injected (used by tests with MemoryDb)
+  const db = customDb || new PostgresDb();
   const approvalService = new ApprovalService(db);
   const auditService = new AuditService(db);
   const approvalController = new ApprovalController(approvalService, auditService, db);
