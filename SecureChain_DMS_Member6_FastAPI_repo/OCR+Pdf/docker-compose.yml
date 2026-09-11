@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  securechain-member6:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: securechain-dms-member6:latest
+    container_name: securechain_member6
+    ports:
+      - "8000:8000"
+    volumes:
+      # persist downloaded model weights across container restarts so the
+      # ~15GB Qwen2-VL-7B download doesn't happen every time
+      - huggingface_cache:/root/.cache/huggingface
+      - ./models:/app/models
+      - ./work:/app/work
+    environment:
+      - SECURECHAIN_HOME=/app
+      - API_PORT=8000
+      - CORS_ALLOWED_ORIGINS=*  # restrict to your frontend's origin in production, e.g. http://localhost:3000
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  huggingface_cache:
