@@ -2,7 +2,14 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+  "builds": [
+    { "src": "api/main.py", "use": "@vercel/python" },
+    { "src": "api/quorum.js", "use": "@vercel/node" },
+    { "src": "package.json", "use": "@vercel/vite" }
+  ],
+  "routes": [
+    { "src": "/api/gateway/(.*)", "dest": "/api/main.py" },
+    { "src": "/api/quorum/(.*)", "dest": "/api/quorum.js" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
