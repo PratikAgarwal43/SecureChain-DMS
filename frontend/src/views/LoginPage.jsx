@@ -32,6 +32,8 @@ const PREFIX_MAP = {
   JUD: { role: 'JUDICIAL', secondaryLabel: 'Court / Jurisdiction',           secondaryPlaceholder: 'e.g. Patiala House Courts, New Delhi' },
   FOR: { role: 'FORENSIC', secondaryLabel: 'Laboratory / Unit',              secondaryPlaceholder: 'e.g. Central Forensic Science Laboratory (CFSL)' },
   FSL: { role: 'FORENSIC', secondaryLabel: 'Laboratory / Unit',              secondaryPlaceholder: 'e.g. Central Forensic Science Laboratory (CFSL)' },
+  'DL-': { role: 'POLICE', secondaryLabel: 'Assigned Station / Division',    secondaryPlaceholder: 'e.g. Central Police Station' },
+  SYS: { role: 'ADMIN',    secondaryLabel: 'Administrator Sub-domain',       secondaryPlaceholder: 'e.g. IT Department' }
 };
 
 /** Detect role config from the first 3 chars of an ID string. Returns null if unrecognized. */
@@ -74,14 +76,7 @@ export default function LoginPage({
     setDetected(config);
     if (value.trim().length >= 3) {
       if (config) {
-        // Valid prefix — clear any ID error
         setFieldErrors((prev) => ({ ...prev, officialId: '' }));
-      } else {
-        // Unrecognised prefix — show inline error (deliberately vague)
-        setFieldErrors((prev) => ({
-          ...prev,
-          officialId: 'ID not recognised — check your Official ID and try again.'
-        }));
       }
     } else {
       // Too short to determine yet — clear both
@@ -121,8 +116,6 @@ export default function LoginPage({
     const newErrors = {};
     if (!idTrimmed) {
       newErrors.officialId = 'Official ID is required.';
-    } else if (!detected) {
-      newErrors.officialId = 'ID not recognised — check your Official ID and try again.';
     }
     if (!pwTrimmed) {
       newErrors.password = 'Password is required.';
@@ -135,38 +128,54 @@ export default function LoginPage({
 
     setLoading(true);
 
-    setTimeout(() => {
-      const portalRole = detected.role;
+    try {
+      // 1. Make actual call to backend
+      const response = await fetch("http://localhost:8000/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: idTrimmed,
+          password: pwTrimmed
+        })
+      });
 
-      // 1. Try exact ID match in personas
-      let match = personas.find(
-        (p) => p.id?.trim().toUpperCase() === idTrimmed.toUpperCase() && p.portalRole === portalRole
-      );
-
-      // 2. Fallback: demo password unlocks the first persona of the detected role
-      if (!match && pwTrimmed === '123456') {
-        match = personas.find((p) => p.portalRole === portalRole) || personas[0];
+      if (!response.ok) {
+        throw new Error('Authentication rejected by credential gateway. Invalid credentials.');
       }
 
-      if (!match) {
-        setErrorMsg('Authentication rejected by credential gateway. Invalid credentials.');
-        setLoading(false);
-        return;
-      }
+      const data = await response.json();
+      
+      // 2. Save token to local storage
+      localStorage.setItem("access_token", data.access_token);
+      localStorage.setItem("refresh_token", data.refresh_token);
+
+      const portalRole = (data.role.includes('POLICE') || data.role.includes('OFFICER')) ? 'POLICE' :
+                         data.role.includes('FORENSIC') ? 'FORENSIC' :
+                         (data.role.includes('MAGISTRATE') || data.role.includes('JUDGE') || data.role.includes('PROSECUTOR') || data.role.includes('REGISTRAR')) ? 'JUDICIAL' : 'ADMIN';
 
       // Merge any typed secondary field so ProfileCard displays what the user entered
       const extraData = {};
-      if (detected.secondaryLabel && secondaryField.trim()) {
+      if (detected?.secondaryLabel && secondaryField.trim()) {
         if (portalRole === 'POLICE')   extraData.policeStation = secondaryField.trim();
         if (portalRole === 'JUDICIAL') extraData.court         = secondaryField.trim();
         if (portalRole === 'FORENSIC') extraData.labUnit       = secondaryField.trim();
       }
 
-      const enrichedUser = { ...match, ...extraData };
+      const enrichedUser = {
+        id: data.employee_id,
+        name: data.name,
+        role: data.role,
+        portalRole: portalRole,
+        ...extraData
+      };
+
       toast.success(`Authenticated successfully as ${enrichedUser.name}`);
       onLoginSuccess(enrichedUser);
+    } catch (err) {
+      setErrorMsg(err.message || 'Server error. Could not connect to API Gateway.');
+    } finally {
       setLoading(false);
-    }, 600);
+    }
   };
 
   // ── Render ───────────────────────────────────────────────────────────────────

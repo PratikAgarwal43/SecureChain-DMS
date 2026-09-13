@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SECURECHAIN DMS -- PostgreSQL Migration v0.3
 -- SIH26190 | Zero-Trust Legal Evidence Vault
 -- 17 Tables | 8 Triggers | 22 Indexes | Seed Data
@@ -341,7 +341,7 @@ CREATE TABLE case_court_registrations (
 
 -- TRIGGER 1: No self-approval
 CREATE OR REPLACE FUNCTION fn_no_self_approval()
-RETURNS TRIGGER LANGUAGE plpgsql AS 
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE v_requester UUID;
 BEGIN
     SELECT requester_id INTO v_requester FROM edit_requests WHERE id = NEW.edit_request_id;
@@ -349,20 +349,20 @@ BEGIN
         RAISE EXCEPTION 'SELF_APPROVAL_BLOCKED: Cannot approve own edit request.';
     END IF;
     RETURN NEW;
-END; ;
+END; $$;
 CREATE TRIGGER trg_no_self_approval
     BEFORE INSERT ON approval_assignments
     FOR EACH ROW EXECUTE FUNCTION fn_no_self_approval();
 
 -- TRIGGER 2: Protect locked versions
 CREATE OR REPLACE FUNCTION fn_protect_locked()
-RETURNS TRIGGER LANGUAGE plpgsql AS 
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.status IN ('LOCKED','APPROVED','REJECTED') THEN
         RAISE EXCEPTION 'IMMUTABILITY_VIOLATION: Version % is % and cannot be modified.', OLD.id, OLD.status;
     END IF;
     RETURN NEW;
-END; ;
+END; $$;
 CREATE TRIGGER trg_protect_locked
     BEFORE UPDATE ON document_versions
     FOR EACH ROW EXECUTE FUNCTION fn_protect_locked();
@@ -373,7 +373,7 @@ CREATE RULE rule_audit_no_delete AS ON DELETE TO audit_logs DO INSTEAD NOTHING;
 
 -- TRIGGER 5: Reveal approver identities after quorum decision
 CREATE OR REPLACE FUNCTION fn_reveal_identities()
-RETURNS TRIGGER LANGUAGE plpgsql AS 
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.status IN ('APPROVED','REJECTED') AND OLD.status NOT IN ('APPROVED','REJECTED') THEN
         UPDATE approval_assignments
@@ -381,14 +381,14 @@ BEGIN
         WHERE edit_request_id = NEW.id AND identity_revealed_at IS NULL;
     END IF;
     RETURN NEW;
-END; ;
+END; $$;
 CREATE TRIGGER trg_reveal_identities
     AFTER UPDATE OF status ON edit_requests
     FOR EACH ROW EXECUTE FUNCTION fn_reveal_identities();
 
 -- TRIGGER 6: Auto-notify all participants when document uploaded
 CREATE OR REPLACE FUNCTION fn_notify_upload()
-RETURNS TRIGGER LANGUAGE plpgsql AS 
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE rec RECORD; v_type VARCHAR(60); v_sev VARCHAR(20);
 BEGIN
     v_type := CASE NEW.document_type
@@ -406,14 +406,14 @@ BEGIN
                v_type, 'New ' || NEW.document_type || ': ' || NEW.title, v_sev);
     END LOOP;
     RETURN NEW;
-END; ;
+END; $$;
 CREATE TRIGGER trg_notify_upload
     AFTER INSERT ON documents
     FOR EACH ROW EXECUTE FUNCTION fn_notify_upload();
 
 -- TRIGGER 7: Auto-notify on quorum completion
 CREATE OR REPLACE FUNCTION fn_notify_quorum()
-RETURNS TRIGGER LANGUAGE plpgsql AS 
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE v_case UUID; v_title VARCHAR(255); rec RECORD; v_ntype VARCHAR(60);
 BEGIN
     IF NEW.status IN ('APPROVED','REJECTED') AND OLD.status = 'PENDING_QUORUM' THEN
@@ -433,14 +433,14 @@ BEGIN
         END LOOP;
     END IF;
     RETURN NEW;
-END; ;
+END; $$;
 CREATE TRIGGER trg_notify_quorum
     AFTER UPDATE OF status ON edit_requests
     FOR EACH ROW EXECUTE FUNCTION fn_notify_quorum();
 
 -- TRIGGER 8: Auto update_at timestamps
-CREATE OR REPLACE FUNCTION fn_update_ts() RETURNS TRIGGER LANGUAGE plpgsql AS 
-BEGIN NEW.updated_at = NOW(); RETURN NEW; END; ;
+CREATE OR REPLACE FUNCTION fn_update_ts() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$;
 CREATE TRIGGER trg_ts_cases     BEFORE UPDATE ON cases     FOR EACH ROW EXECUTE FUNCTION fn_update_ts();
 CREATE TRIGGER trg_ts_documents BEFORE UPDATE ON documents FOR EACH ROW EXECUTE FUNCTION fn_update_ts();
 CREATE TRIGGER trg_ts_users     BEFORE UPDATE ON users     FOR EACH ROW EXECUTE FUNCTION fn_update_ts();

@@ -18,28 +18,65 @@ Cryptography: SHA-256 hashing, ECDSA/RSA digital signatures
 AI & Processing: Tesseract OCR, spaCy/Transformers for NLP sensitivity auto-classification, and Microsoft Presidio for PII redaction 
 Frontend: React with role-based dashboards  
 
-⚙️ Local Installation & Setup
-Clone the Repository:Bashgit clone https://github.com/PratikAgarwal43/SecureChain-DMS.git
-                            cd SecureChain-DMS
+⚙️ Installation & Setup (Supabase Edition)
 
-Configure Environment Variables:
-Create a .env file based on the provided template, configuring your PostgreSQL database connection strings, JWT secrets, and storage keys.
+This project has been updated to run on **Supabase** (PostgreSQL) instead of a local PostgreSQL server.
 
-Install Dependencies & Run:
+### 1. Database Setup
+1. Create a Supabase project.
+2. Go to **SQL Editor** in your Supabase dashboard and paste the contents of `services/security-and-database/securechain_v03_migration.sql`. Run it to create all tables and triggers.
+3. Grab your Supabase **Connection Pooler URL** (IPv4). It should look like `postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres`.
+4. Update the database URL in the following files:
+   - `services/api-gateway/config.py`
+   - `seed_users.py`
+   - `services/quorum-approval-engine/src/db/postgresDb.js`
+5. Run the seeder to create demo users:
+   ```bash
+   python seed_users.py
+   ```
 
-Backend  :Bash  cd backend
-                npm install
-                npm run dev
-Frontend:Bash   cd frontend
-                npm install
-                npm start
+### 2. Running the Backend Microservices
+The backend consists of three separate microservices. Open a terminal for each:
 
-                
+**API Gateway (Port 8000)**
+```bash
+cd services/api-gateway
+python -m venv venv
+# Activate venv (e.g., venv\Scripts\activate on Windows)
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+**AI OCR Pipeline (Port 8001)**
+```bash
+cd services/ai-ocr-pipeline
+pip install -r requirements.txt
+uvicorn api:app --host 0.0.0.0 --port 8001
+```
+
+**Quorum Approval Engine**
+```bash
+cd services/quorum-approval-engine
+npm install
+npm start
+```
+
+### 3. Running the Frontend
+The React frontend connects to the API Gateway on port 8000.
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open your browser to `http://localhost:5173/`. Log in with one of the generated users (e.g., Username: `DL-IO-001`, Password: `IO@SecureChain1`).
+
+---
+
 🧪 Running Tests
-To verify security constraints (such as the self-approval block, duplicate vote prevention, and hash-chain integrity checks), execute the test suite:
-
-Bash  npm test
+To verify security constraints, execute the test suite:
+```bash
+npm test
+```
 
 📜 License
-
 This project is open-source under the MIT License.

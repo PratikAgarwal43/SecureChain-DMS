@@ -202,30 +202,67 @@ function AppContent() {
     }
   }, [activeUser, currentTab]);
 
-  // Fetch initial data from backend
+  // Fetch initial data from backend using the wired API Gateway
   const fetchAllData = async () => {
     try {
-      // Fetch personas
-      const pRes = await fetch('/api/personas');
-      if (pRes.ok) {
-        const pData = await pRes.json();
-        setPersonas(pData.personas || []);
+      if (!activeUser) {
+        setLoading(false);
+        return; // Don't fetch if not logged in
       }
 
-      // Fetch documents & metrics
-      const dRes = await fetch('/api/documents');
-      if (dRes.ok) {
-        const dData = await dRes.json();
-        setDocuments(dData.documents || []);
-        if (dData.metrics) setMetrics(dData.metrics);
+      // 1. Fetch cases the user has access to
+      const cRes = await fetch("http://localhost:8000/cases", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem('access_token')}` }
+      });
+      
+      if (cRes.ok) {
+        const cData = await cRes.json();
         
+        // 2. For each case, fetch its documents
+        let allDocs = [];
+        for (const c of cData.cases) {
+          const dRes = await fetch(`http://localhost:8000/cases/${c.id}/documents`, {
+            headers: { "Authorization": `Bearer ${localStorage.getItem('access_token')}` }
+          });
+          if (dRes.ok) {
+            const dData = await dRes.json();
+            // Map the backend document fields to what the frontend UI expects
+            const mappedDocs = dData.documents.map(doc => ({
+              id: doc.id,
+              caseId: c.id,
+              title: doc.title,
+              type: doc.document_type,
+              status: doc.status === 'LOCKED' ? 'Secured' : doc.status === 'QUORUM_PENDING' ? 'Quorum Pending' : 'Processing',
+              classification: doc.sensitivity_level === 'CRITICAL' ? 'Top Secret' : doc.sensitivity_level,
+              uploadedBy: doc.uploaded_by,
+              date: new Date(doc.created_at).toLocaleDateString(),
+              size: "Unknown", // the backend query doesn't join file_size from version
+              locked: doc.status === 'LOCKED',
+              chainHash: doc.chain_hash,
+              versions: doc.latest_version
+            }));
+            allDocs = allDocs.concat(mappedDocs);
+          }
+        }
+        
+        setDocuments(allDocs);
+        
+        // Dummy metrics for now, could be calculated from allDocs
+        setMetrics({
+          totalDocuments: allDocs.length,
+          lockedCount: allDocs.filter(d => d.locked).length,
+          pendingQuorumCount: allDocs.filter(d => d.status === 'Quorum Pending').length,
+          rejectedCount: 0,
+          totalBlocks: allDocs.reduce((acc, doc) => acc + (doc.versions || 1), 0)
+        });
+
         if (selectedDoc) {
-          const fresh = dData.documents.find(d => d.id === selectedDoc.id);
+          const fresh = allDocs.find(d => d.id === selectedDoc.id);
           if (fresh) setSelectedDoc(fresh);
         }
       }
     } catch (err) {
-      console.error("Failed to load initial data:", err);
+      console.error("Failed to load initial data from gateway:", err);
     } finally {
       setLoading(false);
     }
@@ -233,7 +270,7 @@ function AppContent() {
 
   useEffect(() => {
     fetchAllData();
-  }, []);
+  }, [activeUser]); // Re-fetch when user logs in
 
   // Handlers
   const handleToggleLang = () => {

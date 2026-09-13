@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 class PostgresDb {
   constructor() {
     this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/securechain_db',
+      connectionString: process.env.DATABASE_URL || 'postgresql://postgres.mkgjjgrgwodcctyagkrt:Shreyash%401234@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres',
     });
   }
 
