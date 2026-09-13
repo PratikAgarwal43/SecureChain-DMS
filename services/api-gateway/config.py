@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     quorum_service_url: str = "http://localhost:3000"
 
     # --- Cloudflare R2 ---
-    r2_account_id: str = ""
-    r2_access_key_id: str = ""
-    r2_secret_access_key: str = ""
-    r2_bucket_name: str = "securechain-vault2"
+    r2_account_id: str = "f52686567a73ec8457e8f9e92abcf2b6"
+    r2_access_key_id: str = "253456037a929062e8e325862f132243"
+    r2_secret_access_key: str = "4785cb2613b8a7ea5badeb6e9accd46322f02cb7a30d14b2a06f61d40e8636bb"
+    r2_bucket_name: str = "secure-chain-dms"
 
     class Config:
         env_file = ".env"
