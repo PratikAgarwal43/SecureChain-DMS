@@ -17,6 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 )
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
 app = FastAPI(
     title="SecureChain DMS — API Gateway",
@@ -33,7 +34,7 @@ app = FastAPI(
 # CORS — allow the React frontend (dev: 5173, prod: update with real domain)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
