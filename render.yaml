@@ -1,0 +1,41 @@
+services:
+  # 1. API Gateway
+  - type: web
+    name: securechain-api-gateway
+    env: python
+    buildCommand: "cd services/api-gateway && pip install -r requirements.txt"
+    startCommand: "cd services/api-gateway && uvicorn main:app --host 0.0.0.0 --port `$PORT"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: OCR_SERVICE_URL
+        value: "https://securechain-ocr-pipeline.onrender.com"
+      - key: QUORUM_SERVICE_URL
+        value: "https://securechain-quorum-engine.onrender.com"
+      - key: PYTHON_VERSION
+        value: 3.12.0
+
+  # 2. Quorum Approval Engine
+  - type: web
+    name: securechain-quorum-engine
+    env: node
+    buildCommand: "cd services/quorum-approval-engine && npm install"
+    startCommand: "cd services/quorum-approval-engine && npm start"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NODE_VERSION
+        value: 20.x
+
+  # 3. AI OCR Pipeline
+  - type: web
+    name: securechain-ocr-pipeline
+    env: python
+    buildCommand: "cd services/ai-ocr-pipeline && pip install -r requirements.txt"
+    startCommand: "cd services/ai-ocr-pipeline && uvicorn api:app --host 0.0.0.0 --port `$PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+
