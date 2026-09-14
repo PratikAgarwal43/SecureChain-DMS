@@ -27,6 +27,7 @@ import CopyrightView from './views/public/CopyrightView';
 import DisclaimerView from './views/public/DisclaimerView';
 import { ToastProvider, useToast } from './context/ToastContext';
 import { translations } from './i18n/translations';
+import { apiClient, getToken, setStoredAuth, clearStoredAuth, getStoredUser } from './services/apiClient';
 
 function AppContent() {
   const toast = useToast();
@@ -53,6 +54,7 @@ function AppContent() {
 
   // Modals
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
   const [quorumModalOpen, setQuorumModalOpen] = useState(false);
   const [activeQuorumDoc, setActiveQuorumDoc] = useState(null);
 
@@ -202,75 +204,107 @@ function AppContent() {
     }
   }, [activeUser, currentTab]);
 
-  // Fetch initial data from backend using the wired API Gateway
+  // Fetch initial data from backend
   const fetchAllData = async () => {
     try {
-      if (!activeUser) {
-        setLoading(false);
-        return; // Don't fetch if not logged in
+      // Fetch personas
+      try {
+        const pRes = await fetch('/api/personas');
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          setPersonas(pData.personas || []);
+        }
+      } catch (_) {
+        // Fallback for personas
       }
 
-      // 1. Fetch cases the user has access to
-      const cRes = await fetch("http://localhost:8000/cases", {
-        headers: { "Authorization": `Bearer ${localStorage.getItem('access_token')}` }
-      });
-      
-      if (cRes.ok) {
-        const cData = await cRes.json();
-        
-        // 2. For each case, fetch its documents
-        let allDocs = [];
-        for (const c of cData.cases) {
-          const dRes = await fetch(`http://localhost:8000/cases/${c.id}/documents`, {
-            headers: { "Authorization": `Bearer ${localStorage.getItem('access_token')}` }
-          });
-          if (dRes.ok) {
-            const dData = await dRes.json();
-            // Map the backend document fields to what the frontend UI expects
-            const mappedDocs = dData.documents.map(doc => ({
-              id: doc.id,
-              caseId: c.id,
-              title: doc.title,
-              type: doc.document_type,
-              status: doc.status === 'LOCKED' ? 'Secured' : doc.status === 'QUORUM_PENDING' ? 'Quorum Pending' : 'Processing',
-              classification: doc.sensitivity_level === 'CRITICAL' ? 'Top Secret' : doc.sensitivity_level,
-              uploadedBy: doc.uploaded_by,
-              date: new Date(doc.created_at).toLocaleDateString(),
-              size: "Unknown", // the backend query doesn't join file_size from version
-              locked: doc.status === 'LOCKED',
-              chainHash: doc.chain_hash,
-              versions: doc.latest_version
-            }));
-            allDocs = allDocs.concat(mappedDocs);
-          }
-        }
-        
-        setDocuments(allDocs);
-        
-        // Dummy metrics for now, could be calculated from allDocs
-        setMetrics({
-          totalDocuments: allDocs.length,
-          lockedCount: allDocs.filter(d => d.locked).length,
-          pendingQuorumCount: allDocs.filter(d => d.status === 'Quorum Pending').length,
-          rejectedCount: 0,
-          totalBlocks: allDocs.reduce((acc, doc) => acc + (doc.versions || 1), 0)
-        });
+      // Fetch documents & metrics from real backend API if authenticated
+      if (getToken()) {
+        try {
+          const res = await apiClient.get('/documents');
+          const rawItems = res?.items || (Array.isArray(res) ? res : []);
 
-        if (selectedDoc) {
-          const fresh = allDocs.find(d => d.id === selectedDoc.id);
-          if (fresh) setSelectedDoc(fresh);
+          const formattedItems = rawItems.map(d => ({
+            ...d,
+            id: d.id,
+            title: d.title,
+            firNo: d.case_id ? `CASE-${String(d.case_id).substring(0, 8).toUpperCase()}` : `DOC-${String(d.id).substring(0, 8).toUpperCase()}`,
+            sha256: d.sha256_hash || d.sha256 || d.hash || '',
+            status: d.status || (d.is_sealed ? 'LOCKED' : 'PENDING'),
+            version: d.version || '1.0',
+            created_at: d.created_at || d.createdAt,
+            requesterId: d.requester_id || d.uploaded_by || d.created_by || d.authorId,
+          }));
+
+          setDocuments(formattedItems);
+
+          // Calculate metrics dynamically from real backend documents
+          const totalDocs = formattedItems.length;
+          const locked = formattedItems.filter(d => d.status === 'LOCKED' || d.status === 'APPROVED' || d.is_sealed || d.is_locked).length;
+          const pending = formattedItems.filter(d => d.status === 'PENDING_AMENDMENT' || d.status === 'PENDING_QUORUM' || d.status === 'PENDING').length;
+          const rejected = formattedItems.filter(d => d.status === 'REJECTED' || d.status === 'TAMPER_DETECTED').length;
+          const totalVerBlocks = formattedItems.reduce((acc, d) => acc + (d.version_count || d.version_number || 1), 0);
+
+          setMetrics({
+            totalDocuments: totalDocs,
+            lockedCount: locked,
+            pendingQuorumCount: pending,
+            rejectedCount: rejected,
+            totalBlocks: totalVerBlocks
+          });
+
+          if (selectedDoc) {
+            const fresh = formattedItems.find(d => d.id === selectedDoc.id);
+            if (fresh) setSelectedDoc(fresh);
+          }
+        } catch (docErr) {
+          console.error("Failed to load real documents from API:", docErr);
         }
       }
     } catch (err) {
-      console.error("Failed to load initial data from gateway:", err);
+      console.error("Failed to load initial data:", err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAllData();
-  }, [activeUser]); // Re-fetch when user logs in
+    const initAuthAndData = async () => {
+      const token = getToken();
+      if (token) {
+        try {
+          const userRes = await apiClient.get('/auth/me');
+          if (userRes) {
+            const storedUser = getStoredUser() || {};
+            const empId = userRes.employee_id || storedUser.employee_id || '';
+            const prefix = empId.slice(0, 3).toUpperCase();
+            const prefixRoleMap = { POL: 'POLICE', JUD: 'JUDICIAL', FOR: 'FORENSIC', FSL: 'FORENSIC', AUD: 'AUDITOR' };
+            const portalRole = storedUser.portalRole || prefixRoleMap[prefix] || (userRes.role === 'ADMIN' ? 'AUDITOR' : 'POLICE');
+
+            const restoredUser = {
+              ...storedUser,
+              id: userRes.id || empId,
+              employee_id: empId,
+              employeeId: empId,
+              name: userRes.name || storedUser.name || 'Official User',
+              email: userRes.email || storedUser.email,
+              role: userRes.role || storedUser.role || portalRole,
+              portalRole: portalRole,
+            };
+            setActiveUser(restoredUser);
+            setStoredAuth(token, restoredUser);
+          }
+        } catch (err) {
+          console.warn("Stored JWT session invalid or expired:", err.message);
+          clearStoredAuth();
+          setActiveUser(null);
+        }
+      }
+      await fetchAllData();
+    };
+
+    initAuthAndData();
+  }, []);
 
   // Handlers
   const handleToggleLang = () => {
@@ -367,8 +401,34 @@ function AppContent() {
     toast.info(`Switched active cadre to ${persona.name} (${persona.role})`);
   };
 
+  const handleDemoApproverLogin = async (employeeId) => {
+    try {
+      toast.info(`Switching user to ${employeeId}...`);
+      const data = await apiClient.post('/auth/login', {
+        employee_id: employeeId,
+        password: '123456'
+      });
+      const backendUser = data.user || {};
+      
+      const enrichedUser = {
+        ...backendUser,
+        id: backendUser.id || backendUser.employee_id,
+        name: backendUser.name || 'Approver',
+        portalRole: 'JUDICIAL'
+      };
+      
+      setActiveUser(enrichedUser);
+      toast.success(`Switched active cadre to ${enrichedUser.name}`);
+      setQuorumModalOpen(false); // Close modal so they can reopen it as the new user
+      setTimeout(() => setQuorumModalOpen(true), 100);
+    } catch (err) {
+      toast.error(`Demo login failed for ${employeeId}.`);
+    }
+  };
+
   const handleLoginSuccess = (user) => {
     setActiveUser(user);
+    fetchAllData();
     toast.success(`Authenticated successfully as ${user.name}`);
     if (user.portalRole === 'CITIZEN') {
       setCurrentTab('citizen');
@@ -377,34 +437,61 @@ function AppContent() {
     }
   };
 
-  const handleLogout = () => {
-    setActiveUser(null);
-    setCurrentTab('home');
-    setSelectedDoc(null);
-    toast.info("Logged out of official session.");
+  const handleLogout = async () => {
+    try {
+      if (getToken()) {
+        await apiClient.post('/auth/logout');
+      }
+    } catch (_) {
+      // Ignore API errors during logout cleanup
+    } finally {
+      clearStoredAuth();
+      setActiveUser(null);
+      setCurrentTab('home');
+      setSelectedDoc(null);
+      toast.info("Logged out of official session.");
+    }
   };
 
   const handleRequestEdit = async (docId, editData) => {
     try {
-      const res = await fetch(`/api/documents/${docId}/request-edit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...editData,
-          requesterId: activeUser?.id || 'POL-DL-4892'
-        })
-      });
+      const { reason, proposalFile } = editData || {};
+      if (!proposalFile) {
+        toast.error("Please select a proposed amendment PDF file.");
+        return;
+      }
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to request edit');
+      const formData = new FormData();
+      formData.append("reason", reason || "Supplementary document amendment request");
+      formData.append("file", proposalFile);
+
+      const res = await apiClient.postFormData(`/documents/${docId}/edit-requests`, formData);
+
+      // On successful creation:
+      toast.success("Amendment request submitted for quorum approval.");
+
+      // Refresh documents and update active selection state
+      if (selectedDoc && selectedDoc.id === docId) {
+        setSelectedDoc(prev => ({
+          ...prev,
+          status: 'PENDING_QUORUM',
+          editRequestId: res.id,
+          activeEditRequest: res
+        }));
+      }
 
       await fetchAllData();
-      setSelectedDoc(data.document);
-      setActiveQuorumDoc(data.document);
-      setQuorumModalOpen(true);
-      toast.success("Amendment submitted for multi-officer consensus!");
     } catch (err) {
-      toast.error("Error submitting edit request: " + err.message);
+      console.error("Failed to submit edit request:", err);
+      let errorMsg = err.message || 'Failed to submit edit request';
+      if (err.status === 403) {
+        errorMsg = "Permission Denied: Requester or role is not authorized to request an edit on this case.";
+      } else if (err.status === 413) {
+        errorMsg = "File Size Error: Proposed PDF exceeds maximum file upload limit.";
+      } else if (err.status === 404) {
+        errorMsg = "Not Found: Document or source version record was not found.";
+      }
+      toast.error(errorMsg);
     }
   };
 
@@ -417,11 +504,33 @@ function AppContent() {
     toast.success("Consensus vote recorded on immutable ledger.");
   };
 
+  const handleFinalizeSuccess = async (docId, newVersion) => {
+    const verStr = newVersion?.version || (newVersion?.version_number ? `1.${newVersion.version_number - 1}` : '1.1');
+    toast.success(`Amendment finalized successfully! Version v${verStr} sealed into repository.`);
+
+    await fetchAllData();
+
+    if (selectedDoc && selectedDoc.id === docId) {
+      try {
+        const freshDoc = await apiClient.get(`/documents/${docId}`);
+        if (freshDoc) {
+          setSelectedDoc(prev => ({
+            ...prev,
+            ...freshDoc,
+            status: 'LOCKED',
+            currentVersion: freshDoc.version_number ? `1.${freshDoc.version_number - 1}` : verStr
+          }));
+        }
+      } catch (_) {}
+    }
+  };
+
   const handleUploadSuccess = (newDoc) => {
-    fetchAllData();
+    setDocuments(prev => [newDoc, ...prev.filter(d => d.id !== newDoc.id)]);
     setSelectedDoc(newDoc);
     setCurrentTab('dashboard');
-    toast.success(`FIR ${newDoc.firNo} sealed into tamper-evident repository!`);
+    fetchAllData();
+    toast.success(`FIR ${newDoc.firNo || newDoc.id} sealed into tamper-evident repository!`);
   };
 
   const handleVerdictSuccess = (updatedDoc, verdict) => {
@@ -536,7 +645,10 @@ function AppContent() {
             documents={documents}
             metrics={metrics}
             onSelectDocument={handleSelectDocument}
-            onOpenUpload={() => setUploadModalOpen(true)}
+            onOpenUpload={(file) => {
+              setUploadFile(file);
+              setUploadModalOpen(true);
+            }}
             onOpenQuorum={handleOpenQuorum}
             onGoToAudit={() => handleSelectTab('audit')}
             onGoToChain={handleGoToChain}
@@ -620,15 +732,15 @@ function AppContent() {
         )}
 
       </main>
-
-      {/* 6. Government-Standard 4-Column GIGW Compliant Footer with Tricolor Strip */}
-      <Footer lang={lang} onSelectTab={handleSelectTab} />
-
       {/* Modals & Dialogs */}
       {uploadModalOpen && (
         <UploadModal
           isOpen={uploadModalOpen}
-          onClose={() => setUploadModalOpen(false)}
+          onClose={() => {
+            setUploadModalOpen(false);
+            setUploadFile(null);
+          }}
+          initialFile={uploadFile}
           onUploadSuccess={handleUploadSuccess}
           activeUser={activeUser}
         />
@@ -641,6 +753,8 @@ function AppContent() {
           document={activeQuorumDoc}
           activeUser={activeUser}
           onVoteSuccess={handleVoteSuccess}
+          onFinalizeSuccess={handleFinalizeSuccess}
+          onSwitchUser={handleDemoApproverLogin}
         />
       )}
 

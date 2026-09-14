@@ -30,6 +30,7 @@ import DragDropUploader from '../../components/DragDropUploader';
 import { useToast } from '../../context/ToastContext';
 import RoleSettingsPanel from '../../components/RoleSettingsPanel';
 import ProfileCard from '../../components/ProfileCard';
+import { apiClient } from '../../services/apiClient';
 
 
 export default function ForensicDashboard({ 
@@ -181,29 +182,39 @@ export default function ForensicDashboard({
     setInOcrReview(true);
   };
 
-  const handleConfirmOcrAndLock = () => {
+  const handleConfirmOcrAndLock = async () => {
     if (!droppedFile) return;
-    toast.success(`Human-confirmed ${reportType} report locked! SHA-256 computed on confirmed content.`);
     
-    setOcrQueue(prev => [
-      {
-        id: `OCR-${Math.floor(1000 + Math.random() * 9000)}`,
-        fileName: droppedFile.name,
-        caseRef: ocrForm.caseRef,
-        fileSize: `${(droppedFile.size / (1024 * 1024)).toFixed(2)} MB`,
-        confidence: `${ocrForm.confidenceScore}%`,
-        reportType: reportType,
-        keywordsFound: ocrForm.keywords.split(',').map(k => k.trim()),
-        sensitivityTier: ocrForm.sensitivityTier,
-        sha256: droppedFile.sha256,
-        status: "ANALYZED_READY"
-      },
-      ...prev
-    ]);
-
-    setDroppedFile(null);
-    setInOcrReview(false);
-    setCurrentTab('ocr');
+    try {
+      const formData = new FormData();
+      // Extract the actual File object from the DragDropUploader payload
+      let fileToSend = droppedFile.file || droppedFile;
+      
+      // Only mock if it's strictly not a Blob/File
+      if (!(fileToSend instanceof File || fileToSend instanceof Blob)) {
+        const pdfContent = `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF`;
+        fileToSend = new File([pdfContent], droppedFile.name || "Forensic_Report.pdf", { type: "application/pdf" });
+      }
+      
+      // Link to the demo case ID (or selected case Ref)
+      const caseId = "11111111-1111-4111-8111-111111111111"; // Seeded demo case UUID
+      
+      formData.append("file", fileToSend);
+      formData.append("case_id", caseId);
+      formData.append("title", ocrForm.reportTitle || `Forensic Report - ${fileToSend.name}`);
+      formData.append("document_type", "FORENSIC_REPORT");
+      formData.append("sensitivity_level", ocrForm.sensitivityTier || "HIGH");
+      
+      // Post to backend
+      const resDoc = await apiClient.post('/documents/upload', formData);
+      
+      toast.success(`Human-confirmed ${reportType} report uploaded and securely locked to Case ${caseId}!`);
+      
+      // Reload page to reflect new document in state
+      window.location.reload();
+    } catch (err) {
+      toast.error(err.message || "Failed to upload forensic report.");
+    }
   };
 
   return (
@@ -406,7 +417,7 @@ export default function ForensicDashboard({
               </div>
               
               {(() => {
-                const requestDocs = pendingQuorums.filter(d => d.requesterId === activeUser?.id);
+                const requestDocs = pendingQuorums.filter(d => (d.requesterId || d.uploaded_by || d.created_by) === activeUser?.id);
                 return requestDocs.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {requestDocs.slice(0, 4).map(doc => {

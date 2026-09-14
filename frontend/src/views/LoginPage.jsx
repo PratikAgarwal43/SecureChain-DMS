@@ -8,6 +8,7 @@ import {
 
 import PasswordField from '../components/PasswordField';
 import { useToast } from '../context/ToastContext';
+import { apiClient, setStoredAuth } from '../services/apiClient';
 
 /**
  * Official Login Page (/login) — Unified Generic Gateway
@@ -32,8 +33,8 @@ const PREFIX_MAP = {
   JUD: { role: 'JUDICIAL', secondaryLabel: 'Court / Jurisdiction',           secondaryPlaceholder: 'e.g. Patiala House Courts, New Delhi' },
   FOR: { role: 'FORENSIC', secondaryLabel: 'Laboratory / Unit',              secondaryPlaceholder: 'e.g. Central Forensic Science Laboratory (CFSL)' },
   FSL: { role: 'FORENSIC', secondaryLabel: 'Laboratory / Unit',              secondaryPlaceholder: 'e.g. Central Forensic Science Laboratory (CFSL)' },
-  'DL-': { role: 'POLICE', secondaryLabel: 'Assigned Station / Division',    secondaryPlaceholder: 'e.g. Central Police Station' },
-  SYS: { role: 'ADMIN',    secondaryLabel: 'Administrator Sub-domain',       secondaryPlaceholder: 'e.g. IT Department' }
+  EMP: { role: 'POLICE',   secondaryLabel: 'Department / Unit',              secondaryPlaceholder: 'e.g. Headquarters / Operations' },
+  ADM: { role: 'POLICE',   secondaryLabel: 'Department / Unit',              secondaryPlaceholder: 'e.g. System Administration' },
 };
 
 /** Detect role config from the first 3 chars of an ID string. Returns null if unrecognized. */
@@ -74,15 +75,7 @@ export default function LoginPage({
   const runDetection = (value) => {
     const config = detectFromId(value);
     setDetected(config);
-    if (value.trim().length >= 3) {
-      if (config) {
-        setFieldErrors((prev) => ({ ...prev, officialId: '' }));
-      }
-    } else {
-      // Too short to determine yet — clear both
-      setFieldErrors((prev) => ({ ...prev, officialId: '' }));
-    }
-    // Reset secondary field when prefix changes
+    setFieldErrors((prev) => ({ ...prev, officialId: '' }));
     setSecondaryField('');
   };
 
@@ -91,7 +84,6 @@ export default function LoginPage({
     setOfficialId(value);
     setErrorMsg('');
 
-    // Debounce detection by 280ms so it fires while typing but not on every keystroke
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => runDetection(value), 280);
   };
@@ -109,7 +101,6 @@ export default function LoginPage({
     e.preventDefault();
     setErrorMsg('');
 
-    // ── Client-side format gate ──────────────────────────────────────────────
     const idTrimmed = officialId.trim();
     const pwTrimmed = password.trim();
 
@@ -129,50 +120,60 @@ export default function LoginPage({
     setLoading(true);
 
     try {
-      // 1. Make actual call to backend
-      const response = await fetch("http://localhost:8000/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          employee_id: idTrimmed,
-          password: pwTrimmed
-        })
+      // Authenticate against real FastAPI endpoint POST /api/v1/auth/login
+      const data = await apiClient.post('/auth/login', {
+        employee_id: idTrimmed,
+        password: pwTrimmed
       });
 
-      if (!response.ok) {
-        throw new Error('Authentication rejected by credential gateway. Invalid credentials.');
+      const backendUser = data.user || {};
+      const backendRole = (backendUser.role || '').toUpperCase();
+
+      let portalRole = 'POLICE';
+      if (backendRole === 'JUDICIAL' || backendRole === 'REVIEWER') {
+        portalRole = 'JUDICIAL';
+      } else if (backendRole === 'FORENSIC' || backendRole === 'FSL') {
+        portalRole = 'FORENSIC';
+      } else if (backendRole === 'AUDITOR' || backendRole === 'AUDIT') {
+        portalRole = 'AUDITOR';
+      } else if (detected && detected.role) {
+        portalRole = detected.role;
+      } else if (backendRole === 'OFFICER' || backendRole === 'POLICE' || backendRole === 'ADMIN') {
+        portalRole = 'POLICE';
       }
 
-      const data = await response.json();
-      
-      // 2. Save token to local storage
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("refresh_token", data.refresh_token);
-
-      const portalRole = (data.role.includes('POLICE') || data.role.includes('OFFICER')) ? 'POLICE' :
-                         data.role.includes('FORENSIC') ? 'FORENSIC' :
-                         (data.role.includes('MAGISTRATE') || data.role.includes('JUDGE') || data.role.includes('PROSECUTOR') || data.role.includes('REGISTRAR')) ? 'JUDICIAL' : 'ADMIN';
-
-      // Merge any typed secondary field so ProfileCard displays what the user entered
+      // Merge secondary field context if supplied
       const extraData = {};
-      if (detected?.secondaryLabel && secondaryField.trim()) {
+      if (detected && detected.secondaryLabel && secondaryField.trim()) {
         if (portalRole === 'POLICE')   extraData.policeStation = secondaryField.trim();
         if (portalRole === 'JUDICIAL') extraData.court         = secondaryField.trim();
         if (portalRole === 'FORENSIC') extraData.labUnit       = secondaryField.trim();
       }
 
+      // Match persona template for UI decoration (avatars, titles, etc.)
+      const matchedPersona = personas.find(
+        (p) => p.id?.trim().toUpperCase() === idTrimmed.toUpperCase() || p.employee_id?.trim().toUpperCase() === idTrimmed.toUpperCase()
+      ) || personas.find((p) => p.portalRole === portalRole) || {};
+
       const enrichedUser = {
-        id: data.employee_id,
-        name: data.name,
-        role: data.role,
+        ...matchedPersona,
+        id: backendUser.id || backendUser.employee_id || idTrimmed,
+        employee_id: backendUser.employee_id || idTrimmed,
+        employeeId: backendUser.employee_id || idTrimmed,
+        name: backendUser.name || matchedPersona.name || 'Official User',
+        email: backendUser.email || matchedPersona.email,
+        role: backendUser.role || matchedPersona.role || portalRole,
         portalRole: portalRole,
         ...extraData
       };
 
+      // Store JWT token and authenticated user in localStorage
+      setStoredAuth(data.access_token, enrichedUser);
+
       toast.success(`Authenticated successfully as ${enrichedUser.name}`);
       onLoginSuccess(enrichedUser);
     } catch (err) {
-      setErrorMsg(err.message || 'Server error. Could not connect to API Gateway.');
+      setErrorMsg(err.message || 'Authentication rejected by credential gateway. Invalid credentials.');
     } finally {
       setLoading(false);
     }

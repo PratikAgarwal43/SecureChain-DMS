@@ -60,7 +60,7 @@ export default function PoliceDashboard({
   const [droppedFile, setDroppedFile] = useState(null);
 
   // Filter strictly to this officer's own cases by requesterId
-  const myCases = documents.filter(d => d.requesterId === activeUser?.id);
+  const myCases = documents.filter(d => (d.requesterId || d.uploaded_by || d.created_by) === activeUser?.id);
   const pendingRequests = myCases.filter(d => d.status === 'PENDING_QUORUM');
 
   const custodyEvents = [
@@ -73,7 +73,7 @@ export default function PoliceDashboard({
   const handleProceedToOcr = () => {
     if (!droppedFile) return;
     if (onOpenUpload) {
-      onOpenUpload();
+      onOpenUpload(droppedFile.file || droppedFile);
     } else {
       toast.info(`Proceeding to OCR text verification for ${droppedFile.name}...`);
     }
@@ -104,7 +104,7 @@ export default function PoliceDashboard({
         </div>
 
         <button
-          onClick={onOpenUpload}
+          onClick={() => onOpenUpload(null)}
           className="px-4 sm:px-5 py-2.5 bg-[#FF6A1A] hover:bg-[#E85B0E] text-white font-bold rounded-xl text-xs shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer w-full sm:w-auto"
         >
           <FileText className="w-4 h-4" />

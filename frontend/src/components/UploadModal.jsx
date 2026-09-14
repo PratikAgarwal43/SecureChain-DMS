@@ -16,10 +16,12 @@ import {
   Sparkles,
   RefreshCw,
   Eye,
-  Check
+  Check,
+  Lock
 } from 'lucide-react';
 import { translations } from '../i18n/translations';
 import DragDropUploader from './DragDropUploader';
+import apiClient from '../services/apiClient';
 
 /**
  * Upload & Ingestion Modal with Real-time OCR Review & Correction Screen
@@ -31,18 +33,19 @@ import DragDropUploader from './DragDropUploader';
 export default function UploadModal({ 
   isOpen, 
   onClose, 
-  onSuccess, 
+  onUploadSuccess, 
   activeUser,
+  initialFile = null,
   lang = 'en' 
 }) {
   const t = translations[lang] || translations.en;
 
   // Step 1: Upload / Choose File; Step 2: OCR Review & Correction; Step 3: Sealing
-  const [step, setStep] = useState('UPLOAD'); // 'UPLOAD' | 'OCR_REVIEW' | 'SEALING'
+  const [step, setStep] = useState(initialFile ? 'OCR_REVIEW' : 'UPLOAD'); // 'UPLOAD' | 'OCR_REVIEW' | 'SEALING'
 
   // Selected File / Scanned Document
-  const [fileObj, setFileObj] = useState(null);
-  const [selectedFileName, setSelectedFileName] = useState('Scanned_FIR_CrPC_154_Docket.pdf');
+  const [selectedFile, setSelectedFile] = useState(initialFile);
+  const [selectedFileName, setSelectedFileName] = useState(initialFile?.name || 'Scanned_FIR_CrPC_154_Docket.pdf');
   const [fileSize, setFileSize] = useState('4.8 MB');
   const [isExtractingOcr, setIsExtractingOcr] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
@@ -70,40 +73,44 @@ export default function UploadModal({
   const [policeStationConf, setPoliceStationConf] = useState(99);
 
   const [incidentSummary, setIncidentSummary] = useState(
-    'Complainant alleges systematic diversion of public funds via shell entities over a 3-year period.'
+    'Complainant reported coordinated unauthorized diversion of funds across 42 beneficiary accounts via forged identities. Primary suspect detained with 18 SIM cards and 24 forged identification cards.'
   );
-  const [incidentConf, setIncidentConf] = useState(94); // High
+  const [incidentConf, setIncidentConf] = useState(98);
 
   // Live Cryptographic Hashes
-  const [rawOcrHash, setRawOcrHash] = useState('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); // default empty sha256
+  const [rawOcrHash, setRawOcrHash] = useState('b49a1c87e02931a556d1fbc890214ebc99201a4e5f782390ab1289de66c10123');
   const [verifiedHash, setVerifiedHash] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // -------------------------------------------------------------
-  // Dynamic Hash Updates: when user corrects OCR, the hash changes
-  // -------------------------------------------------------------
+  // Live SHA-256 calculation on human-verified text in browser
   useEffect(() => {
-    // A deterministic hash based on exactly what the user confirmed.
-    // This strictly ensures the ledger anchors what the human saw, not what the raw OCR output was.
-    const textToAnchor = `${caseTitle}|${complainant}|${actsAndSections}|${stolenValue}|${incidentSummary}`;
-    
-    // Quick crypto digest for UI feedback
-    crypto.subtle.digest('SHA-256', new TextEncoder().encode(textToAnchor))
-      .then(hashBuffer => {
+    const computeLiveHash = async () => {
+      const payload = `${caseTitle}|${complainant}|${actsAndSections}|${stolenValue}|${accused}|${policeStation}|${incidentSummary}`;
+      try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(payload);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
         setVerifiedHash(hashHex);
-      })
-      .catch(() => {
+      } catch (err) {
+        // Fallback simple hash if subtle crypto is unavailable
         setVerifiedHash('3d5f8a0e889c2b4c10294e77da1b1c3e7f4a56b2c890de41fa7712398ab45c11');
-      });
-  }, [caseTitle, complainant, actsAndSections, stolenValue, incidentSummary]);
+      }
+    };
+
+    computeLiveHash();
+  }, [caseTitle, complainant, actsAndSections, stolenValue, accused, policeStation, incidentSummary]);
 
   if (!isOpen) return null;
 
   // Trigger OCR Extraction Simulation
   const handleStartOcr = () => {
+    if (!selectedFile) {
+      setErrorMsg("Please select a file to upload first.");
+      return;
+    }
     setIsExtractingOcr(true);
     setOcrProgress(15);
 
@@ -138,7 +145,7 @@ export default function UploadModal({
     setStolenValueConf(100);
   };
 
-  // Final confirmation: Submit human-confirmed text & hash to backend
+  // Final confirmation: Submit real document file & metadata via FormData to FastAPI backend
   const handleFinalSubmit = async (e) => {
     e.preventDefault();
     if (!caseTitle || !complainant || !incidentSummary) {
@@ -150,63 +157,62 @@ export default function UploadModal({
     setErrorMsg('');
 
     try {
-      // 1. Create a Case
-      const caseRes = await fetch("http://localhost:8000/cases", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem('access_token')}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          title: caseTitle,
-          description: incidentSummary,
-          jurisdiction: "National",
-          case_type: "FIR"
-        })
-      });
+      // 1. Prepare raw File object to upload
+      let fileToSend = selectedFile?.file || selectedFile;
+      if (!fileToSend || !(fileToSend instanceof File || fileToSend instanceof Blob)) {
+        const pdfContent = `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj 3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n00000000102 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF`;
+        fileToSend = new File([pdfContent], selectedFileName || "Scanned_FIR_Docket.pdf", { type: "application/pdf" });
+      }
 
-      if (!caseRes.ok) throw new Error("Failed to create case.");
-      const caseData = await caseRes.json();
-      const newCaseId = caseData.case_id;
+      // 2. Prepare FormData according to backend contract: /api/v1/documents/upload
+      const caseId = "11111111-1111-4111-8111-111111111111"; // Seeded demo case UUID
 
-      // 2. Prepare FormData for Document Upload
       const formData = new FormData();
-      formData.append("case_id", newCaseId);
-      formData.append("document_type", "FIR");
+      formData.append("file", fileToSend);
+      formData.append("case_id", caseId);
       formData.append("title", caseTitle);
-      
-      // If no real file was provided via drag and drop, create a dummy PDF file buffer to satisfy the endpoint.
-      let uploadFile = fileObj;
-      if (!uploadFile) {
-        uploadFile = new File(["dummy content for OCR testing"], "Scanned_FIR_CrPC_154_Docket.pdf", { type: "application/pdf" });
+      formData.append("document_type", "FIR");
+      formData.append("sensitivity_level", "MEDIUM");
+
+      // 3. Post to backend via central apiClient (Bearer JWT injected, multipart boundary generated by browser)
+      const resDoc = await apiClient.post('/documents/upload', formData);
+
+      // 4. Construct clean UI document object from backend response
+      const mappedDoc = {
+        id: resDoc.id,
+        case_id: resDoc.case_id,
+        caseId: resDoc.case_id,
+        firNo: `FIR/2026/DEL/${String(resDoc.id).substring(0, 4).toUpperCase()}`,
+        caseTitle: resDoc.title || caseTitle,
+        title: resDoc.title || caseTitle,
+        document_type: resDoc.document_type || "FIR",
+        type: resDoc.document_type || "FIR",
+        sensitivity_level: resDoc.sensitivity_level || "MEDIUM",
+        sensitivityLevel: resDoc.sensitivity_level || "MEDIUM",
+        status: resDoc.status || "LOCKED",
+        current_version_id: resDoc.current_version_id,
+        currentVersion: '1.0',
+        created_by: resDoc.uploaded_by || resDoc.created_by,
+        created_at: resDoc.created_at,
+        dateReported: resDoc.created_at || new Date().toISOString(),
+        complainant: complainant,
+        actsAndSections: actsAndSections,
+        stolenValue: stolenValue,
+        accused: accused,
+        incidentSummary: incidentSummary,
+        policeStation: policeStation,
+        sha256: verifiedHash,
+        requesterId: activeUser?.id || "POL-DL-4892",
+      };
+
+      if (onUploadSuccess) {
+        onUploadSuccess(mappedDoc);
       }
-      formData.append("file", uploadFile);
-
-      // 3. Upload the File
-      const res = await fetch('http://localhost:8000/upload', {
-        method: 'POST',
-        headers: { "Authorization": `Bearer ${localStorage.getItem('access_token')}` },
-        body: formData
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.detail || 'Failed to upload document');
-      }
-
-      const resData = await res.json();
-
-      // Trigger animation
-      setStep('SEALING');
-      
-      setTimeout(() => {
-        onUploadSuccess();
-        onClose();
-      }, 2500);
-
+      onClose();
     } catch (err) {
-      console.error(err);
-      setErrorMsg(err.message || 'Server connection failed.');
+      console.error("Upload error:", err);
+      setErrorMsg(err.message || "Failed to upload document");
+    } finally {
       setSubmitting(false);
     }
   };
@@ -251,13 +257,15 @@ export default function UploadModal({
             
             {/* Drag & Drop Uploader with live SHA-256 calculation */}
             <DragDropUploader
-              onFileSelect={(file) => {
-                if (file) {
-                  setFileObj(file);
-                  setSelectedFileName(file.name);
-                  setFileSize(`${(file.size / (1024 * 1024)).toFixed(2)} MB`);
-                  setVerifiedHash(file.sha256);
-                  setRawOcrHash(file.sha256);
+              onFileSelect={(fileData) => {
+                if (fileData) {
+                  setSelectedFile(fileData.file || fileData);
+                  setSelectedFileName(fileData.name);
+                  setFileSize(fileData.size || `${((fileData.file?.size || 0) / (1024 * 1024)).toFixed(2)} MB`);
+                  setVerifiedHash(fileData.sha256);
+                  setRawOcrHash(fileData.sha256);
+                } else {
+                  setSelectedFile(null);
                 }
               }}
               label="Drag & Drop Scanned FIR Document or Physical Exhibit Dossier"
@@ -510,7 +518,7 @@ export default function UploadModal({
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-500">Raw Uncorrected OCR Hash:</span>
                 <span className="font-mono text-[10px] text-slate-400 line-through">
-                  {rawOcrHash.substring(0, 28)}...
+                  {(rawOcrHash || '').substring(0, 28)}...
                 </span>
               </div>
 
@@ -520,7 +528,7 @@ export default function UploadModal({
                   <span>Stored Hash (Computed on Human-Confirmed Text):</span>
                 </span>
                 <span className="font-mono text-xs font-bold text-[#000080] bg-white px-2 py-0.5 rounded border border-slate-300">
-                  {verifiedHash.substring(0, 24)}...
+                  {(verifiedHash || '').substring(0, 24)}...
                 </span>
               </div>
 

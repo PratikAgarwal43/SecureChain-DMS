@@ -131,7 +131,7 @@ export default function ProfileCard({
     const uid = activeUser.id;
     switch (role) {
       case 'POLICE': {
-        const myCases = documents.filter(d => d.requesterId === uid);
+        const myCases = documents.filter(d => (d.requesterId || d.uploaded_by || d.created_by) === uid);
         const myPending = myCases.filter(d => d.status === 'PENDING_QUORUM');
         return [
           { icon: FolderOpen, label: 'My Cases', value: myCases.length, desc: 'FIR records submitted by you' },
@@ -145,7 +145,7 @@ export default function ProfileCard({
         ];
       }
       case 'FORENSIC': {
-        const myReports = documents.filter(d => d.requesterId === uid);
+        const myReports = documents.filter(d => (d.requesterId || d.uploaded_by || d.created_by) === uid);
         const myPending = myReports.filter(d => d.status === 'PENDING_QUORUM');
         const allPending = documents.filter(d => d.status === 'PENDING_QUORUM');
         return [

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { translations } from '../i18n/translations';
 import { useToast } from '../context/ToastContext';
+import { apiClient } from '../services/apiClient';
 import EmptyState from '../components/EmptyState';
 
 /**
@@ -48,7 +49,7 @@ export default function ApprovalsView({
   const defaultTab = userRole === 'POLICE' ? 'my_requests' : (initialTab || 'approvals');
   const [activeViewTab, setActiveViewTab] = useState(defaultTab);
 
-  const pendingDocs = documents.filter(d => d.status === 'PENDING_QUORUM');
+  const pendingDocs = documents.filter(d => d.status === 'PENDING_QUORUM' || d.status === 'PENDING');
   
   // Split into own requests vs peer review requests
   const myRequests = pendingDocs.filter(d => 
@@ -65,34 +66,38 @@ export default function ApprovalsView({
   const [voteComment, setVoteComment] = useState('');
 
   const handleCastVote = async (doc, voteType) => {
-    // Front-end self-approval block check
-    if (activeUser && (activeUser.id === doc.requesterId || activeUser.id === doc.authorId)) {
+    const requesterId = doc.requester_id || doc.requesterId || doc.uploaded_by || doc.authorId;
+    if (activeUser && (String(activeUser.id) === String(requesterId) || String(activeUser.employee_id) === String(requesterId))) {
       toast.error("Rule 4B Enforcement: You cannot approve your own edit request.");
       return;
     }
 
+    const requestId = doc.editRequestId || doc.activeEditRequest?.id || doc.id;
     setVotingId(doc.id);
+
     try {
-      const res = await fetch(`/api/documents/${doc.id}/quorum-vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          version: doc.draftVersion || '1.1',
-          approverId: activeUser?.id || 'POL-IPS-1094',
-          vote: voteType,
-          comment: voteComment || (voteType === 'APPROVE' ? 'Verified and approved' : 'Rejected after inspection')
-        })
+      const res = await apiClient.post(`/documents/${doc.id}/edit-requests/${requestId}/vote`, {
+        vote_choice: voteType
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to record vote');
-      }
-
       toast.success(voteType === 'APPROVE' ? 'Consensus approval recorded on ledger!' : 'Rejection registered.');
-      if (onVoteSuccess) onVoteSuccess(data.document, data.session);
+      if (onVoteSuccess) {
+        onVoteSuccess({
+          ...doc,
+          status: res.status,
+          editRequestId: requestId,
+          activeEditRequest: res
+        }, res.quorum_data);
+      }
     } catch (err) {
-      toast.error(err.message);
+      console.error("Vote error in ApprovalsView:", err);
+      let msg = err.message || 'Failed to record vote';
+      if (err.status === 403) {
+        msg = "Rule 4B Enforcement: You cannot approve your own edit request (Server 403).";
+      } else if (err.status === 409) {
+        msg = "Duplicate Vote: You have already voted on this amendment request.";
+      }
+      toast.error(msg);
     } finally {
       setVotingId(null);
       setVoteComment('');

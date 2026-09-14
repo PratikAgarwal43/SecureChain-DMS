@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { translations } from '../i18n/translations';
 
+import apiClient from '../utils/apiClient';
+
 /**
  * WORM (Write-Once Read-Many) Audit Trail View per Master Spec Section 11
  * - Light background (#FFF9F2 / #FFFFFF)
@@ -37,15 +39,12 @@ export default function AuditLogView({ onBack, lang = 'en' }) {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/audit-logs');
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs || []);
-        setIntegrityStatus({
-          verified: data.integrity?.isPristine !== false,
-          count: data.totalEntries || data.logs?.length || 0
-        });
-      }
+      const data = await apiClient.get('/audit-logs');
+      setLogs(data.logs || []);
+      setIntegrityStatus({
+        verified: data.integrity?.isPristine !== false,
+        count: data.totalEntries || data.logs?.length || 0
+      });
     } catch (err) {
       console.error("Failed to fetch WORM logs:", err);
     } finally {

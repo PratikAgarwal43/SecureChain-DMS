@@ -96,11 +96,13 @@ export default function DashboardView({
 
   // Define cadre sidebar tabs strictly scoped to each role (Sections 6, 7, 8, 9, 10, 23)
   const getSidebarTabs = () => {
+    const myCasesCount = documents.filter(d => (d.requesterId || d.uploaded_by || d.created_by) === activeUser?.id).length;
+
     switch (role) {
       case 'POLICE':
         return [
           { id: 'overview', label: 'Home', icon: Home, badge: null },
-          { id: 'cases', label: 'My Cases', icon: FolderArchive, badge: documents.length },
+          { id: 'cases', label: 'My Cases', icon: FolderArchive, badge: myCasesCount || null },
           { id: 'upload', label: 'Upload New FIR', icon: UploadCloud, badge: null },
           { id: 'my_requests', label: 'My Requests (Quorum Status)', icon: FileCheck, badge: documents.filter(d => d.status === 'PENDING_QUORUM').length || null },
           { id: 'settings', label: 'Settings', icon: Settings, badge: null }
